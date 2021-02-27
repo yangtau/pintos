@@ -42,7 +42,7 @@ syscall_handler (struct intr_frame *f UNUSED)
     case SYS_HALT:
       break;
     case SYS_EXIT:
-      // TODO: ret num
+      thread_current()->ret = get_syscall_arg(f, 0);
       thread_exit();
       break;
     case SYS_EXEC:                   

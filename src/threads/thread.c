@@ -488,6 +488,7 @@ init_thread (struct thread *t, const char *name, int priority)
 
 #ifdef USERPROG
   sema_init(&t->sem, 0);
+  t->ret = -1;
 #endif
 
   old_level = intr_disable ();

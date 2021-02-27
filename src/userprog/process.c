@@ -27,39 +27,84 @@ static void set_parent(struct thread *t, tid_t parent) {
   t->parent = parent;
 }
 
+static void 
+copy_args(void **esp, char **args) {
+  int i;
+  int cnt = 0;
+  size_t str_size = 0;
+  size_t off;
+
+  for (i = 0; args[i]; i++) {
+    cnt++;
+    str_size += strlen(args[i]) + 1;
+  }
+
+  off = 12 + sizeof(char*)*(cnt+1) + 
+          (4-(str_size%4)); /* make end of string align to 4*/
+  ASSERT(off + str_size < PGSIZE);
+
+  *esp = (char *)*esp - (off + str_size);
+
+#define put(ptr, off, type, v) (*(type*)((char*)(ptr) + (off)) = (v))
+
+  put(*esp, 0, int, 0); // return address
+  put(*esp, 4, int, cnt); // argc
+  put(*esp, 8, char**, (char**)((char *)*esp + 12)); // argv
+
+  for (i = 0; args[i]; i++) {
+    put(*esp, 12+4*i, char*, (char*)*esp + off);
+    off += strlcpy((char*)*esp + off, args[i], PGSIZE-off) + 1;
+  }
+  put(*esp, 12+4*i, char*, (char*)0);
+
+  ASSERT(off%4 == 0);
+
+#undef put
+}
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name) 
+process_execute (const char *file_name, char **args) 
 {
-  char *fn_copy;
   tid_t tid;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  fn_copy = palloc_get_page (0);
-  if (fn_copy == NULL)
+  /*
+  copy = palloc_get_page (PAL_ZERO);
+  if (copy == NULL)
     return TID_ERROR;
-  strlcpy (fn_copy, file_name, PGSIZE);
+
+  // copy args
+  copy_args(copy, args);
+  */
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (file_name, PRI_DEFAULT, start_process, args);
+  /*
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    palloc_free_page (copy); 
+  */
 
   set_parent(thread_get(tid), thread_tid());
-
   return tid;
+}
+
+static void
+push_argument(struct intr_frame *int_f, char **args) {
+  copy_args(&int_f->esp, args);
 }
 
 /* A thread function that loads a user process and starts it
    running. */
 static void
-start_process (void *file_name_)
+start_process (void *args_)
 {
-  char *file_name = file_name_;
+  char **args = args_;
+  char *file_name = args[0];
   struct intr_frame if_;
   bool success;
 
@@ -70,8 +115,10 @@ start_process (void *file_name_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
+  push_argument(&if_, args);
+
   /* If load failed, quit. */
-  palloc_free_page (file_name);
+  // palloc_free_page (args);
   if (!success) 
     thread_exit ();
 
@@ -135,7 +182,8 @@ process_exit (void)
       pagedir_destroy (pd);
     }
 
-    sema_up(&cur->sem);
+  sema_up(&cur->sem);
+  printf("%s: exit(%d)\n", cur->name, cur->ret);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -459,7 +507,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE - 12;
+        *esp = PHYS_BASE;
       else
         palloc_free_page (kpage);
     }
