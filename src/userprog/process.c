@@ -67,27 +67,46 @@ copy_args(void **esp, char **args) {
    before process_execute() returns.  Returns the new process's
    thread id, or TID_ERROR if the thread cannot be created. */
 tid_t
-process_execute (const char *file_name, char **args) 
+process_execute (const char *file_name) 
 {
   tid_t tid;
+  char *args;
+  char **argv;
+  int i, j;
+  int cnt;
+  size_t len;
 
   /* Make a copy of FILE_NAME.
      Otherwise there's a race between the caller and load(). */
-  /*
-  copy = palloc_get_page (PAL_ZERO);
-  if (copy == NULL)
+  args = palloc_get_page (PAL_ZERO);
+  if (args == NULL)
     return TID_ERROR;
 
   // copy args
-  copy_args(copy, args);
-  */
+  len = strlcpy(args, file_name, PGSIZE) + 1;
+  argv = (char **)(args + (len + 3)/4*4); // align to 4
+
+  cnt = 0;
+  for (i = 0; args[i]; ) {
+    ASSERT((intptr_t)(argv + cnt) < (intptr_t)(args + PGSIZE));
+    while (args[i] == ' ') i++; // skip space
+    if (args[i]) argv[cnt++] = args + i;
+    for (j = i; args[j]; j++) {
+      if (args[j] == ' ') {
+        args[j] = '\0';
+        j++;
+        break;
+      }
+    }
+    i = j;
+  }
+
+  argv[cnt] = (char*)0;
 
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, args);
-  /*
+  tid = thread_create (args, PRI_DEFAULT, start_process, argv);
   if (tid == TID_ERROR)
-    palloc_free_page (copy); 
-  */
+    palloc_free_page (args); 
 
   set_parent(thread_get(tid), thread_tid());
   return tid;
@@ -118,7 +137,7 @@ start_process (void *args_)
   push_argument(&if_, args);
 
   /* If load failed, quit. */
-  // palloc_free_page (args);
+  palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
 
