@@ -17,9 +17,15 @@
 #include "threads/palloc.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "threads/synch.h"
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
+
+static void set_parent(struct thread *t, tid_t parent) {
+  ASSERT(t != NULL);
+  t->parent = parent;
+}
 
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
@@ -42,6 +48,9 @@ process_execute (const char *file_name)
   tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
+
+  set_parent(thread_get(tid), thread_tid());
+
   return tid;
 }
 
@@ -88,6 +97,17 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  struct thread *child = thread_get(child_tid);
+  // TODO: delete me
+  ASSERT(child != NULL);
+  ASSERT(child->parent == thread_tid());
+
+  if (child == NULL) return -1;
+  if (child->parent != thread_tid()) return -1;
+
+  // wait for child exit
+  sema_down(&child->sem);
+
   return -1;
 }
 
@@ -114,6 +134,8 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+    sema_up(&cur->sem);
 }
 
 /* Sets up the CPU for running user code in the current
@@ -437,7 +459,7 @@ setup_stack (void **esp)
     {
       success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
       if (success)
-        *esp = PHYS_BASE;
+        *esp = PHYS_BASE - 12;
       else
         palloc_free_page (kpage);
     }

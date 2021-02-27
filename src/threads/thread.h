@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 
+#include "synch.h"
+
 /* States in a thread's life cycle. */
 enum thread_status
   {
@@ -84,6 +86,7 @@ struct thread
   {
     /* Owned by thread.c. */
     tid_t tid;                          /* Thread identifier. */
+    tid_t parent;                       /* tid of parent */
     enum thread_status status;          /* Thread state. */
     char name[16];                      /* Name (for debugging purposes). */
     uint8_t *stack;                     /* Saved stack pointer. */
@@ -96,6 +99,7 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
+    struct semaphore sem;
 #endif
 
     /* Owned by thread.c. */
@@ -137,5 +141,7 @@ int thread_get_nice (void);
 void thread_set_nice (int);
 int thread_get_recent_cpu (void);
 int thread_get_load_avg (void);
+
+struct thread *thread_get(tid_t);
 
 #endif /* threads/thread.h */
