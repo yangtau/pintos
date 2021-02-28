@@ -121,7 +121,7 @@ sys_open(const char* file_name) {
 static void 
 sys_close(int fd) {
   if (process_fd_get(fd) == NULL) {
-    // ingore
+    thread_exit();
     return;
   }
   process_fd_remove(fd);

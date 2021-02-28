@@ -253,7 +253,6 @@ process_wait_for_loading(tid_t child_tid) {
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  // TODO: The process that calls wait has already called wait on pid
   int ret;
   struct thread *child = thread_get(child_tid);
   if (child == NULL) return -1;
@@ -265,6 +264,8 @@ process_wait (tid_t child_tid UNUSED)
 
   // notify child to cleanup
   sema_up(&child->exit);
+
+  child->parent = -1; // make another wait return -1
 
   // child may be freed here
   return ret;
@@ -296,8 +297,8 @@ process_exit (void)
 
   close_all_files();
 
-  sema_up(&cur->sem); // to parent
   printf("%s: exit(%d)\n", cur->name, cur->ret);
+  sema_up(&cur->sem); // to parent
 
   sema_down(&cur->exit); // wait for parent to release
 }
@@ -414,6 +415,12 @@ load (const char *file_name, void (**eip) (void), void **esp)
       printf ("load: %s: open failed\n", file_name);
       goto done; 
     }
+  
+  file_deny_write(file);
+  if (process_fd_add(file) < 0) {
+    file_close(file);
+    goto done;
+  }
 
   /* Read and verify executable header. */
   if (file_read (file, &ehdr, sizeof ehdr) != sizeof ehdr
@@ -496,9 +503,11 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   success = true;
 
+  return true;
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+  // file will be close in process_exit
+  // file_close (file);
   return success;
 }
 
