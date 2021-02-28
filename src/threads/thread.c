@@ -491,6 +491,7 @@ init_thread (struct thread *t, const char *name, int priority)
   sema_init(&t->load, 0);
   sema_init(&t->exit, 0);
   t->ret = -1;
+  t->next_fd = 2;
 
   list_init(&t->fds);
 #endif

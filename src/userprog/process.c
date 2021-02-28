@@ -28,7 +28,6 @@ struct file_dp {
   struct list_elem elem;
 };
 
-static int next_fd = 2;
 static struct file_dp *find_fd(int fd);
 static void close_all_files(void);
 
@@ -38,7 +37,7 @@ process_fd_add(struct file* f) {
   if (dp == NULL) return -1;
 
   dp->f = f;
-  dp->fd = next_fd++;
+  dp->fd = thread_current()->next_fd++;
   
   list_push_back(&thread_current()->fds, &dp->elem);
 

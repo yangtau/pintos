@@ -105,6 +105,7 @@ struct thread
     bool  success_load;     // successful loading
     int ret;                // return value
     struct list fds;        // file descriptor opened by this thread
+    int next_fd;
 #endif
 
     /* Owned by thread.c. */
