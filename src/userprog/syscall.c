@@ -15,25 +15,29 @@ syscall_init (void)
 }
 
 static void
-check_user_addr(void *uaddr) {
-  void *kaddr;
+check_user_addr_area(void *uaddr, size_t offset) {
   struct thread *cur = thread_current();
-  if (!is_user_vaddr(uaddr) ||
-      (kaddr = pagedir_get_page(cur->pagedir, uaddr)) == NULL) {
-    thread_exit();
+  uint8_t *addr = pg_round_down(uaddr);
+  while (addr < (uint8_t*)uaddr + offset) {
+    if (!is_user_vaddr(addr) ||
+        pagedir_get_page(cur->pagedir, addr) == NULL) {
+      thread_exit();
+    }
+    addr = addr + PGSIZE;
   }
 }
 
 static int
 get_syscall_num(struct intr_frame *f) {
-  check_user_addr(f->esp);
+  // memory int the range should be valid
+  check_user_addr_area(f->esp, 4);
   int n = *((int*)f->esp);
   return n;
 }
 
 static int
 get_syscall_arg(struct intr_frame *f, int n) {
-  check_user_addr((int32_t*)f->esp + n + 1);
+  check_user_addr_area((int32_t*)f->esp + n + 1, 4);
   return *((int*)f->esp + n + 1);
 }
 
