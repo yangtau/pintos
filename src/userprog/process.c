@@ -18,6 +18,74 @@
 #include "threads/thread.h"
 #include "threads/vaddr.h"
 #include "threads/synch.h"
+#include "threads/malloc.h"
+
+
+// file descriptor
+struct file_dp {
+  int fd;
+  struct file* f;
+  struct list_elem elem;
+};
+
+static int next_fd = 2;
+static struct file_dp *find_fd(int fd);
+static void close_all_files(void);
+
+int
+process_fd_add(struct file* f) {
+  struct file_dp *dp = malloc(sizeof(struct file_dp));
+  if (dp == NULL) return -1;
+
+  dp->f = f;
+  dp->fd = next_fd++;
+  
+  list_push_back(&thread_current()->fds, &dp->elem);
+
+  return dp->fd;
+}
+
+// remove and close
+void
+process_fd_remove(int fd) {
+  struct file_dp *dp = find_fd(fd);
+  ASSERT(dp != NULL);
+  list_remove(&dp->elem);
+
+  file_close(dp->f);
+  free(dp);
+}
+
+struct file*
+process_fd_get(int fd) {
+  struct file_dp *dp = find_fd(fd);
+  if (dp == NULL) return NULL;
+  return dp->f;
+}
+
+static struct file_dp*
+find_fd(int fd) {
+  struct list_elem *e;
+  struct list *l = &thread_current()->fds;
+
+  for (e = list_begin(l); e != list_end(l); e = list_next(e)) {
+    struct file_dp* dp = list_entry(e, struct file_dp, elem);
+    if (dp->fd == fd) {
+      return dp;
+    }
+  }
+  return NULL;
+}
+
+static void
+close_all_files(void) {
+  struct list *l = &thread_current()->fds;
+  while (!list_empty(l)) {
+    struct file_dp *dp = list_entry(list_pop_front(l), struct file_dp, elem);
+    file_close(dp->f);
+    free(dp);
+  }
+}
 
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
@@ -225,6 +293,8 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
+
+  close_all_files();
 
   sema_up(&cur->sem); // to parent
   printf("%s: exit(%d)\n", cur->name, cur->ret);
