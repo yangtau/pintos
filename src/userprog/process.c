@@ -27,8 +27,68 @@ static void set_parent(struct thread *t, tid_t parent) {
   t->parent = parent;
 }
 
+// return argv
+static char**
+copy_args(char *args, const char*cmd_line) {
+  char **argv;
+  int i, j;
+  int cnt;
+  size_t len;
+
+  // copy args
+  len = strlcpy(args, cmd_line, PGSIZE) + 1;
+  argv = (char **) ROUND_UP((intptr_t)args+len, 4); // align to 4
+
+  cnt = 0;
+  for (i = 0; args[i]; ) {
+    ASSERT((intptr_t)(argv + cnt) < (intptr_t)(args + PGSIZE));
+    while (args[i] == ' ') i++; // skip space
+    if (args[i]) argv[cnt++] = args + i;
+    for (j = i; args[j]; j++) {
+      if (args[j] == ' ') {
+        args[j] = '\0';
+        j++;
+        break;
+      }
+    }
+    i = j;
+  }
+
+  argv[cnt] = (char*)0;
+  return argv;
+}
+
+
+/* Starts a new thread running a user program loaded from
+   FILENAME.  The new thread may be scheduled (and may even exit)
+   before process_execute() returns.  Returns the new process's
+   thread id, or TID_ERROR if the thread cannot be created. */
+tid_t
+process_execute (const char *cmd_line) 
+{
+  tid_t tid;
+  char *args;
+  char **argv;
+
+  /* Make a copy of FILE_NAME.
+    Otherwise there's a race between the caller and load(). */
+  args = palloc_get_page (PAL_ZERO);
+  if (args == NULL)
+    return TID_ERROR;
+  argv = copy_args(args, cmd_line);
+
+  /* Create a new thread to execute FILE_NAME. */
+  tid = thread_create (argv[0], PRI_DEFAULT, start_process, argv);
+  if (tid == TID_ERROR)
+    palloc_free_page (args); 
+  else
+    set_parent(thread_get(tid), thread_tid()); 
+  // TODO: set parent tid in start_process too
+  return tid;
+}
+
 static void 
-copy_args(void **esp, char **args) {
+push_argument(void **esp, char **args) {
   int i;
   int cnt = 0;
   size_t str_size = 0;
@@ -39,7 +99,7 @@ copy_args(void **esp, char **args) {
     str_size += strlen(args[i]) + 1;
   }
 
-  off = 12 + sizeof(char*)*(cnt+1) + 
+  off = 12 + sizeof(char*)*(cnt+1) +
           (4-(str_size%4)); /* make end of string align to 4*/
   ASSERT(off + str_size < PGSIZE);
 
@@ -62,61 +122,6 @@ copy_args(void **esp, char **args) {
 #undef put
 }
 
-/* Starts a new thread running a user program loaded from
-   FILENAME.  The new thread may be scheduled (and may even exit)
-   before process_execute() returns.  Returns the new process's
-   thread id, or TID_ERROR if the thread cannot be created. */
-tid_t
-process_execute (const char *file_name) 
-{
-  tid_t tid;
-  char *args;
-  char **argv;
-  int i, j;
-  int cnt;
-  size_t len;
-
-  /* Make a copy of FILE_NAME.
-     Otherwise there's a race between the caller and load(). */
-  args = palloc_get_page (PAL_ZERO);
-  if (args == NULL)
-    return TID_ERROR;
-
-  // copy args
-  len = strlcpy(args, file_name, PGSIZE) + 1;
-  argv = (char **)(args + (len + 3)/4*4); // align to 4
-
-  cnt = 0;
-  for (i = 0; args[i]; ) {
-    ASSERT((intptr_t)(argv + cnt) < (intptr_t)(args + PGSIZE));
-    while (args[i] == ' ') i++; // skip space
-    if (args[i]) argv[cnt++] = args + i;
-    for (j = i; args[j]; j++) {
-      if (args[j] == ' ') {
-        args[j] = '\0';
-        j++;
-        break;
-      }
-    }
-    i = j;
-  }
-
-  argv[cnt] = (char*)0;
-
-  /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (args, PRI_DEFAULT, start_process, argv);
-  if (tid == TID_ERROR)
-    palloc_free_page (args); 
-
-  set_parent(thread_get(tid), thread_tid());
-  return tid;
-}
-
-static void
-push_argument(struct intr_frame *int_f, char **args) {
-  copy_args(&int_f->esp, args);
-}
-
 /* A thread function that loads a user process and starts it
    running. */
 static void
@@ -134,14 +139,19 @@ start_process (void *args_)
   if_.eflags = FLAG_IF | FLAG_MBS;
   success = load (file_name, &if_.eip, &if_.esp);
 
-  push_argument(&if_, args);
+  // loaded
+  thread_current()->success_load = success;
+  sema_up(&thread_current()->load);
 
   /* If load failed, quit. */
-  palloc_free_page (file_name);
   if (!success) 
     thread_exit ();
 
-  /* Start the user process by simulating a return from an
+  // set argument
+  push_argument(&if_.esp, args);
+  palloc_free_page (file_name);
+  
+    /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
      threads/intr-stubs.S).  Because intr_exit takes all of its
      arguments on the stack in the form of a `struct intr_frame',
@@ -149,6 +159,18 @@ start_process (void *args_)
      and jump to it. */
   asm volatile ("movl %0, %%esp; jmp intr_exit" : : "g" (&if_) : "memory");
   NOT_REACHED ();
+}
+
+
+bool
+process_wait_for_loading(tid_t child_tid) {
+  struct thread *child = thread_get(child_tid);
+  ASSERT(child != NULL);
+  ASSERT(child->parent == thread_tid());
+
+  // wait for child loading
+  sema_down(&child->load);
+  return child->success_load;
 }
 
 /* Waits for thread TID to die and returns its exit status.  If
@@ -163,18 +185,21 @@ start_process (void *args_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
+  // TODO: The process that calls wait has already called wait on pid
+  int ret;
   struct thread *child = thread_get(child_tid);
-  // TODO: delete me
-  ASSERT(child != NULL);
-  ASSERT(child->parent == thread_tid());
-
   if (child == NULL) return -1;
   if (child->parent != thread_tid()) return -1;
 
   // wait for child exit
   sema_down(&child->sem);
+  ret = child->ret;
 
-  return -1;
+  // notify child to cleanup
+  sema_up(&child->exit);
+
+  // child may be freed here
+  return ret;
 }
 
 /* Free the current process's resources. */
@@ -201,8 +226,10 @@ process_exit (void)
       pagedir_destroy (pd);
     }
 
-  sema_up(&cur->sem);
+  sema_up(&cur->sem); // to parent
   printf("%s: exit(%d)\n", cur->name, cur->ret);
+
+  sema_down(&cur->exit); // wait for parent to release
 }
 
 /* Sets up the CPU for running user code in the current

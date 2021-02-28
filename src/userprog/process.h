@@ -8,4 +8,6 @@ int process_wait (tid_t);
 void process_exit (void);
 void process_activate (void);
 
+bool process_wait_for_loading (tid_t);
+
 #endif /* userprog/process.h */

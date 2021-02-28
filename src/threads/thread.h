@@ -99,8 +99,11 @@ struct thread
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
     uint32_t *pagedir;                  /* Page directory. */
-    struct semaphore sem;
-    int ret;
+    struct semaphore sem;   // notification of exit 
+    struct semaphore load;  // notification of successful loading
+    struct semaphore exit;  //  notifaction of exit
+    bool  success_load;     // successful loading
+    int ret;                // return value
 #endif
 
     /* Owned by thread.c. */

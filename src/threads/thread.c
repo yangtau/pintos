@@ -488,6 +488,8 @@ init_thread (struct thread *t, const char *name, int priority)
 
 #ifdef USERPROG
   sema_init(&t->sem, 0);
+  sema_init(&t->load, 0);
+  sema_init(&t->exit, 0);
   t->ret = -1;
 #endif
 
