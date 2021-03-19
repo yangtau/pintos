@@ -5,6 +5,9 @@
 #include "threads/init.h"
 #include "threads/pte.h"
 #include "threads/palloc.h"
+#ifdef VM
+#include "vm/frame.h"
+#endif
 
 static uint32_t *active_pd (void);
 static void invalidate_pagedir (uint32_t *);
@@ -39,10 +42,16 @@ pagedir_destroy (uint32_t *pd)
         uint32_t *pt = pde_get_pt (*pde);
         uint32_t *pte;
         
-        for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++)
-          if (*pte & PTE_P) 
-            palloc_free_page (pte_get_page (*pte));
-        palloc_free_page (pt);
+        for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++) {
+          if (*pte & PTE_P) {
+            void *kpage = pte_get_page(*pte);
+            palloc_free_page(kpage);
+#ifdef VM
+            frame_table_remove(kpage, pte);
+#endif
+          }
+        }
+       palloc_free_page (pt);
       }
   palloc_free_page (pd);
 }
@@ -112,6 +121,10 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
     {
       ASSERT ((*pte & PTE_P) == 0);
       *pte = pte_create_user (kpage, writable);
+#ifdef VM
+      // insert this mapping into the frame table
+      frame_table_insert(kpage, pte);
+#endif
       return true;
     }
   else
@@ -153,6 +166,7 @@ pagedir_clear_page (uint32_t *pd, void *upage)
     {
       *pte &= ~PTE_P;
       invalidate_pagedir (pd);
+      // TODO: remove the mapping in the frame table
     }
 }
 
