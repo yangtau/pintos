@@ -1,9 +1,11 @@
 #include "vm/frame.h"
 
-#include "lib/kernel/list.h"
-#include "lib/kernel/hash.h"
-#include "lib/debug.h"
+#include <list.h>
+#include <hash.h>
+#include <debug.h>
+
 #include "threads/malloc.h"
+#include "threads/synch.h"
 
 // kaddr -> list of frame_entry
 struct frame_entry
@@ -21,6 +23,7 @@ struct pte_elem
 };
 
 static struct hash frame_table;
+static struct lock table_lock;
 
 /* Returns a hash value for frame p. */
 static unsigned frame_entry_hash(const struct hash_elem *p_, void *aux UNUSED)
@@ -40,10 +43,8 @@ static bool frame_entry_less(const struct hash_elem *a_, const struct hash_elem 
 
 void frame_table_init()
 {
-    if (!hash_init(&frame_table, frame_entry_hash, frame_entry_less, NULL))
-    {
-        PANIC("failed to init frame table");
-    }
+    ASSERT(hash_init(&frame_table, frame_entry_hash, frame_entry_less, NULL));
+    lock_init(&table_lock);
 }
 
 void frame_table_insert(const void *kaddr, uint32_t *pte)
@@ -55,6 +56,7 @@ void frame_table_insert(const void *kaddr, uint32_t *pte)
         .addr = kaddr,
     };
 
+    lock_acquire(&table_lock);
     struct hash_elem *elem = hash_find(&frame_table, &entry.elem);
     if (elem == NULL)
     {
@@ -68,6 +70,7 @@ void frame_table_insert(const void *kaddr, uint32_t *pte)
     }
 
     list_push_back(&hash_entry(elem, struct frame_entry, elem)->list, &pte_elem->elem);
+    lock_release(&table_lock);
 }
 
 // remove mapping from frame (kaddr) to user page (pte)
@@ -77,6 +80,7 @@ void frame_table_remove(const void *kaddr, const uint32_t *pte)
         .addr = kaddr,
     };
 
+    lock_acquire(&table_lock);
     struct hash_elem *elem = hash_find(&frame_table, &entry.elem);
     ASSERT(elem != NULL);
 
@@ -88,10 +92,11 @@ void frame_table_remove(const void *kaddr, const uint32_t *pte)
         if (list_entry(e, struct pte_elem, elem)->pte == pte)
         {
             list_remove(e);
+            lock_release(&table_lock);
             return;
         }
     }
 
     // there must be an elem be removed in the loop
-    ASSERT(false);
+    NOT_REACHED();
 }

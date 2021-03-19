@@ -1,8 +1,8 @@
 #ifndef VM_FRAME_H
 #define VM_FRAME_H
 
-#include <stdbool.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 // init frame table
 void frame_table_init(void);

@@ -5,6 +5,8 @@
 #include <list.h>
 #include <stdint.h>
 
+#include <hash.h>
+
 #include "synch.h"
 
 /* States in a thread's life cycle. */
@@ -106,6 +108,11 @@ struct thread
     int ret;                // return value
     struct list fds;        // file descriptor opened by this thread
     int next_fd;
+#endif
+
+#ifdef VM
+   struct hash mem_map;
+   int32_t next_mmap_id;
 #endif
 
     /* Owned by thread.c. */
