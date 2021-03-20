@@ -5,6 +5,7 @@
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
 #include "threads/palloc.h"
+#include "threads/pte.h"
 #include "userprog/process.h"
 #include "filesys/file.h"
 
@@ -48,7 +49,7 @@ static void pte_set(uint32_t *pte, enum mem_area_type type, uint32_t x)
 struct mmap_entry
 {
     struct hash_elem elem;
-    mapid_t id;
+    int32_t id;
     int fd;
     off_t off;
     size_t size;
@@ -59,7 +60,7 @@ struct mmap_entry
 static unsigned mmap_entry_hash(const struct hash_elem *p_, void *AUX UNUSED)
 {
     struct mmap_entry *p = hash_entry(p_, struct mmap_entry, elem);
-    return hash_bytes(&p->id, sizeof(mapid_t));
+    return hash_bytes(&p->id, sizeof(int32_t));
 }
 
 static bool mmap_entry_less(const struct hash_elem *a_, const struct hash_elem *b_, void *AUX UNUSED)
@@ -90,7 +91,7 @@ void vm_area_free(struct thread *t)
 // If the size not a multiple of PGSIZE, then some bytes in the final mapped
 // page "stick out" beyond the end of the file. Set these bytes to zero.
 // return -1 on failure
-mapid_t vm_area_map(void *upage, int fd, off_t off, size_t size, bool writable)
+int32_t vm_area_map(void *upage, int fd, off_t off, size_t size, bool writable)
 {
     if ((uint32_t)upage % PGSIZE != 0)
         return -1;
@@ -98,13 +99,13 @@ mapid_t vm_area_map(void *upage, int fd, off_t off, size_t size, bool writable)
         return -1;
 
     struct thread *cur = thread_current();
-    mapid_t mapid = cur->next_mmap_id++;
+    int32_t mapid = cur->next_mmap_id++;
     PTE_VM_AREA_SIZE_CHECK(mapid);
 
     size_t offset = 0;
     for (; offset < size; offset += PGSIZE)
     {
-        uint32_t *pte = pagedir_get_pte(cur->pagedir + offset, upage, true);
+        uint32_t *pte = pagedir_get_pte(cur->pagedir, upage + offset, true);
         ASSERT(pte != NULL);
         if (*pte != 0)
         {
@@ -112,7 +113,7 @@ mapid_t vm_area_map(void *upage, int fd, off_t off, size_t size, bool writable)
             size_t s = 0;
             for (; s < offset; s += PGSIZE)
             {
-                uint32_t *pte = pagedir_get_pte(cur->pagedir + offset, upage, true);
+                uint32_t *pte = pagedir_get_pte(cur->pagedir, upage + s, true);
                 ASSERT(pte != NULL);
                 *pte = 0;
             }
@@ -123,25 +124,50 @@ mapid_t vm_area_map(void *upage, int fd, off_t off, size_t size, bool writable)
 
     // insert mmap into hash table
     struct mmap_entry *entry = malloc(sizeof(struct mmap_entry));
+    ASSERT(entry != NULL);
     entry->id = mapid;
     entry->fd = fd;
     entry->off = off;
     entry->size = size;
     entry->writable = writable;
     entry->start_addr = upage;
-    if (hash_insert(&cur->mem_map, &entry->elem) != NULL)
-        goto fail;
+    ASSERT(hash_insert(&cur->mem_map, &entry->elem) == NULL);
     return mapid;
-fail:
-    free(entry);
-    return -1;
+}
+
+void vm_area_unmap(int32_t mapid)
+{
+    struct thread *cur = thread_current();
+    struct mmap_entry entry = {.id = mapid};
+    struct hash_elem *e = hash_find(&cur->mem_map, &entry.elem);
+    ASSERT(e != NULL);
+
+    struct mmap_entry *map = hash_entry(e, struct mmap_entry, elem);
+
+    size_t off = 0;
+    for (; off < map->size; off++)
+    {
+        void *p = map->start_addr + off;
+        uint32_t *pte = pagedir_get_pte(cur->pagedir, p, false);
+        ASSERT(pte != NULL);
+        ASSERT(pte_get_user(*pte));
+        ASSERT(pte_get_writable(*pte) == map->writable);
+
+        if (pte_get_present(*pte))
+        {
+            // free this page
+            pagedir_clear_page(cur->pagedir, p);
+        }
+        else
+        {
+        }
+    }
 }
 
 // the size must be a multiple of PGSIZE
 // return -1 on failure
-bool vm_area_map_zero(void *upage, size_t size, bool writable)
+void vm_area_zero(void *upage, size_t size, bool writable)
 {
-    // TODO: writable
     if ((uint32_t)upage % PGSIZE != 0)
         return false;
 
@@ -150,7 +176,7 @@ bool vm_area_map_zero(void *upage, size_t size, bool writable)
     size_t offset = 0;
     for (; offset < size; offset += PGSIZE)
     {
-        uint32_t *pte = pagedir_get_pte(cur->pagedir + offset, upage, true);
+        uint32_t *pte = pagedir_get_pte(cur->pagedir, upage + offset, true);
         ASSERT(pte != NULL);
         if (*pte != 0)
         {
@@ -158,7 +184,7 @@ bool vm_area_map_zero(void *upage, size_t size, bool writable)
             size_t s = 0;
             for (; s < offset; s += PGSIZE)
             {
-                uint32_t *pte = pagedir_get_pte(cur->pagedir + offset, upage, true);
+                uint32_t *pte = pagedir_get_pte(cur->pagedir, upage + s, true);
                 ASSERT(pte != NULL);
                 *pte = 0;
             }
@@ -195,8 +221,9 @@ bool vm_area_load(void *upage)
     }
     else if (type == MEM_MAP)
     {
-        struct mmap_entry entry = {.id = (mapid_t)x};
+        struct mmap_entry entry = {.id = (int32_t)x};
         struct hash_elem *e = hash_find(&cur->mem_map, &entry.elem);
+        ASSERT(e != NULL);
         struct mmap_entry *m = hash_entry(e, struct mmap_entry, elem);
         writable = m->writable;
 

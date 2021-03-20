@@ -6,12 +6,16 @@
 
 #include "threads/malloc.h"
 #include "threads/synch.h"
+#include "threads/pte.h"
+#include "threads/palloc.h"
+#include "vm/vm_area.h"
+#include "vm/swap.h"
 
 // kaddr -> list of frame_entry
 struct frame_entry
 {
     struct hash_elem elem;
-    const void *addr; // the kernel address of the frame
+    void *addr; // the kernel address of the frame
     struct list list;
 };
 
@@ -47,7 +51,7 @@ void frame_table_init()
     lock_init(&table_lock);
 }
 
-void frame_table_insert(const void *kaddr, uint32_t *pte)
+void frame_table_insert(void *kaddr, uint32_t *pte)
 {
     struct pte_elem *pte_elem = malloc(sizeof(struct pte_elem));
     pte_elem->pte = pte;
@@ -74,7 +78,7 @@ void frame_table_insert(const void *kaddr, uint32_t *pte)
 }
 
 // remove mapping from frame (kaddr) to user page (pte)
-void frame_table_remove(const void *kaddr, const uint32_t *pte)
+void frame_table_remove(void *kaddr, uint32_t *pte)
 {
     struct frame_entry entry = {
         .addr = kaddr,
@@ -92,6 +96,12 @@ void frame_table_remove(const void *kaddr, const uint32_t *pte)
         if (list_entry(e, struct pte_elem, elem)->pte == pte)
         {
             list_remove(e);
+            if (list_empty(list))
+            {
+                // free page
+                palloc_free_page(kaddr);
+                ASSERT(hash_delete(&frame_table, elem) != NULL);
+            }
             lock_release(&table_lock);
             return;
         }
@@ -99,4 +109,82 @@ void frame_table_remove(const void *kaddr, const uint32_t *pte)
 
     // there must be an elem be removed in the loop
     NOT_REACHED();
+}
+
+static void swap_out_frame(struct frame_entry *f)
+{
+    struct list_elem *e;
+
+    bool dirty = false;
+    for (e = list_begin(&f->list); e != list_end(&f->list); e = list_next(e))
+    {
+        struct pte_elem *p = list_entry(e, struct pte_elem, elem);
+        dirty = dirty || pte_get_dirty(*p->pte);
+
+        if (dirty)
+        {
+        }
+
+        // TODO: no sharing
+        break;
+    }
+}
+
+// CLOCK
+void *frame_table_evict()
+{
+    struct hash_iterator it;
+    struct list_elem *e;
+    struct frame_entry *f = NULL;
+
+    lock_acquire(&table_lock);
+    if (hash_empty(&frame_table))
+        goto done;
+    while (true)
+    {
+        // first phase: try to find an entry that (A=0, D=0)
+        hash_first(&it, &frame_table);
+        while (hash_next(&it))
+        {
+            bool access = false;
+            bool dirty = false;
+            f = hash_entry(hash_cur(&it), struct frame_entry, elem);
+            for (e = list_begin(&f->list); e != list_end(&f->list); e = list_next(e))
+            {
+                struct pte_elem *p = list_entry(e, struct pte_elem, elem);
+                access = access || pte_get_access(*p->pte);
+                dirty = dirty || pte_get_dirty(*p->pte);
+            }
+            if (!access && !dirty)
+                goto done;
+        }
+
+        // second phase: try to find an entry that (A=0, D=1), and clear A
+        hash_first(&it, &frame_table);
+        while (hash_next(&it))
+        {
+            bool access = false;
+            f = hash_entry(hash_cur(&it), struct frame_entry, elem);
+            for (e = list_begin(&f->list); e != list_end(&f->list); e = list_next(e))
+            {
+                struct pte_elem *p = list_entry(e, struct pte_elem, elem);
+                access = access || pte_get_access(*p->pte);
+                // clear access
+                pte_clear_access(p->pte);
+            }
+            if (!access)
+                goto done;
+        }
+    }
+    void *page = NULL;
+done:
+    if (f != NULL)
+    {
+        page = f->addr;
+        // remove f in the hash table
+        hash_delete(&frame_table, &f->elem);
+        swap_out_frame(f);
+    }
+    lock_release(&table_lock);
+    return page;
 }

@@ -45,7 +45,6 @@ pagedir_destroy (uint32_t *pd)
         for (pte = pt; pte < pt + PGSIZE / sizeof *pte; pte++) {
           if (*pte & PTE_P) {
             void *kpage = pte_get_page(*pte);
-            palloc_free_page(kpage);
 #ifdef VM
             frame_table_remove(kpage, pte);
 #endif
@@ -164,9 +163,10 @@ pagedir_clear_page (uint32_t *pd, void *upage)
   pte = pagedir_get_pte (pd, upage, false);
   if (pte != NULL && (*pte & PTE_P) != 0)
     {
+      void *kpage = pte_get_page(*pte);
+      frame_table_remove(kpage, pte);
       *pte &= ~PTE_P;
       invalidate_pagedir (pd);
-      // TODO: remove the mapping in the frame table
     }
 }
 

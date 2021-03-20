@@ -587,26 +587,39 @@ load_segment (int fd, off_t ofs, uint8_t *upage,
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  while (read_bytes > 0 || zero_bytes > 0) 
-    {
-      /* Calculate how to fill this page.
-         We will read PAGE_READ_BYTES bytes from FILE
-         and zero the final PAGE_ZERO_BYTES bytes. */
-      size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-      size_t page_zero_bytes = PGSIZE - page_read_bytes;
-
-      if (page_zero_bytes == PGSIZE) {
-          if (!vm_area_map_zero(upage, PGSIZE, writable)) return false;
-      } else {
-          if (vm_area_map(upage, fd, ofs, page_read_bytes, writable) < 0) return false;
-          ofs += page_read_bytes;
+  if (read_bytes > 0) {
+    int mapid;
+    if ((mapid = vm_area_map(upage, fd, ofs, read_bytes, writable)) < 0) return false;
+    if (zero_bytes > PGSIZE) {
+      if (!vm_area_zero(upage+ROUND_UP(read_bytes, PGSIZE), ROUND_DOWN(zero_bytes, PGSIZE), writable)) {
+        vm_area_unmap(mapid);
+        return false;
       }
-
-      /* Advance. */
-      read_bytes -= page_read_bytes;
-      zero_bytes -= page_zero_bytes;
-      upage += PGSIZE;
     }
+  } else {
+    if (!vm_area_zero(upage, zero_bytes, writable)) return false;
+  }
+
+  // while (read_bytes > 0 || zero_bytes > 0) 
+  //   {
+  //     /* Calculate how to fill this page.
+  //        We will read PAGE_READ_BYTES bytes from FILE
+  //        and zero the final PAGE_ZERO_BYTES bytes. */
+  //     size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
+  //     size_t page_zero_bytes = PGSIZE - page_read_bytes;
+
+  //     if (page_zero_bytes == PGSIZE) {
+  //         if (!vm_area_zero(upage, PGSIZE, writable)) return false;
+  //     } else {
+  //         if (vm_area_map(upage, fd, ofs, page_read_bytes, writable) < 0) return false;
+  //         ofs += page_read_bytes;
+  //     }
+
+  //     /* Advance. */
+  //     read_bytes -= page_read_bytes;
+  //     zero_bytes -= page_zero_bytes;
+  //     upage += PGSIZE;
+  //   }
   return true;
 }
 

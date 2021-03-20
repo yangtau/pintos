@@ -67,6 +67,34 @@ static inline uintptr_t pd_no (const void *va) {
 #define PTE_A 0x20              /* 1=accessed, 0=not acccessed. */
 #define PTE_D 0x40              /* 1=dirty, 0=not dirty (PTEs only). */
 
+static inline void pte_clear_access(uint32_t *pte) {
+  *pte = (*pte) & (~PTE_A);
+}
+
+static inline void pte_clear_dirty(uint32_t *pte) {
+  *pte = (*pte) & (~PTE_D);
+}
+
+static inline bool pte_get_access(uint32_t pte) {
+  return pte & PTE_A;
+}
+
+static inline bool pte_get_dirty(uint32_t pte) {
+  return pte & PTE_D;
+}
+
+static inline bool pte_get_user(uint32_t pte) {
+  return pte & PTE_U;
+}
+
+static inline bool pte_get_writable(uint32_t pte) {
+  return pte & PTE_W;
+}
+
+static inline bool pte_get_present(uint32_t pte) {
+  return pte & PTE_P;
+}
+
 /* Returns a PDE that points to page table PT. */
 static inline uint32_t pde_create (uint32_t *pt) {
   ASSERT (pg_ofs (pt) == 0);
