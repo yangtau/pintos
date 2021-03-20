@@ -19,6 +19,10 @@
 #include "threads/vaddr.h"
 #include "threads/synch.h"
 #include "threads/malloc.h"
+#ifdef VM
+#include "vm/mmap.h"
+#include "vm/page.h"
+#endif
 
 
 // file descriptor
@@ -199,6 +203,11 @@ start_process (void *args_)
   struct intr_frame if_;
   bool success;
 
+#ifdef VM
+  mmap_table_init(thread_current());
+  page_table_init(thread_current());
+#endif
+
   /* Initialize interrupt frame and load executable. */
   memset (&if_, 0, sizeof if_);
   if_.gs = if_.fs = if_.es = if_.ds = if_.ss = SEL_UDSEG;
@@ -277,6 +286,10 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
+  close_all_files();
+  mmap_table_free(cur);
+  page_table_free(cur);
+
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
   pd = cur->pagedir;
@@ -293,8 +306,6 @@ process_exit (void)
       pagedir_activate (NULL);
       pagedir_destroy (pd);
     }
-
-  close_all_files();
 
   printf("%s: exit(%d)\n", cur->name, cur->ret);
   sema_up(&cur->sem); // to parent
@@ -383,7 +394,7 @@ struct Elf32_Phdr
 
 static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
-static bool load_segment (struct file *file, off_t ofs, uint8_t *upage,
+static bool load_segment (int fd, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
@@ -416,7 +427,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
   
   file_deny_write(file);
-  if (process_fd_add(file) < 0) {
+  int fd;
+  if ((fd = process_fd_add(file)) < 0) {
     file_close(file);
     goto done;
   }
@@ -483,7 +495,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
                   read_bytes = 0;
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
-              if (!load_segment (file, file_page, (void *) mem_page,
+              if (!load_segment (fd, file_page, (void *) mem_page,
                                  read_bytes, zero_bytes, writable))
                 goto done;
             }
@@ -574,48 +586,27 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
-load_segment (struct file *file, off_t ofs, uint8_t *upage,
+load_segment (int fd, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (ofs % PGSIZE == 0);
 
-  file_seek (file, ofs);
-  while (read_bytes > 0 || zero_bytes > 0) 
-    {
-      /* Calculate how to fill this page.
-         We will read PAGE_READ_BYTES bytes from FILE
-         and zero the final PAGE_ZERO_BYTES bytes. */
-      size_t page_read_bytes = read_bytes < PGSIZE ? read_bytes : PGSIZE;
-      size_t page_zero_bytes = PGSIZE - page_read_bytes;
-
-      /* Get a page of memory. */
-      uint8_t *kpage = palloc_get_page (PAL_USER);
-      if (kpage == NULL)
+  if (read_bytes > 0) {
+    int mapid;
+    if ((mapid = mmap_add(fd, ofs, read_bytes, upage, writable)) < 0) return false;
+    if (zero_bytes > PGSIZE) {
+      if (!page_add_zeros(upage+ROUND_UP(read_bytes, PGSIZE),zero_bytes/PGSIZE ,writable)) {
+        mmap_remove(mapid);
         return false;
-
-      /* Load this page. */
-      if (file_read (file, kpage, page_read_bytes) != (int) page_read_bytes)
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-      memset (kpage + page_read_bytes, 0, page_zero_bytes);
-
-      /* Add the page to the process's address space. */
-      if (!install_page (upage, kpage, writable)) 
-        {
-          palloc_free_page (kpage);
-          return false; 
-        }
-
-      /* Advance. */
-      read_bytes -= page_read_bytes;
-      zero_bytes -= page_zero_bytes;
-      upage += PGSIZE;
+      }
     }
-  return true;
+  } else {
+    if (!page_add_zeros(upage, DIV_ROUND_UP(zero_bytes, PGSIZE), writable))
+      return false;
+  }
+   return true;
 }
 
 /* Create a minimal stack by mapping a zeroed page at the top of
@@ -626,6 +617,7 @@ setup_stack (void **esp)
   uint8_t *kpage;
   bool success = false;
 
+  // TODO: replace with paging
   kpage = palloc_get_page (PAL_USER | PAL_ZERO);
   if (kpage != NULL) 
     {

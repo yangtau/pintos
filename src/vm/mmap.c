@@ -98,6 +98,7 @@ void mmap_remove(int mmapid)
     size_t off = 0;
     for (; off < map->size; off += PGSIZE)
     {
+        // TODO: write back
         page_clear(map->start_page + off);
     }
 }
@@ -109,5 +110,8 @@ void mmap_load(int mmapid, void *kpage, int off)
 
     struct file *f = process_fd_get(map->fd);
     ASSERT(f != NULL);
-    ASSERT(file_read_at(f, kpage, PGSIZE, map->offset + off) > 0);
+    int size = (int)map->size - off;
+    ASSERT(size > 0);
+    size = size > PGSIZE ? PGSIZE : size;
+    ASSERT(file_read_at(f, kpage, size, map->offset + off) > 0);
 }
