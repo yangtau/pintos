@@ -3,6 +3,7 @@
 
 #include <debug.h>
 #include <list.h>
+#include <hash.h>
 #include <stdint.h>
 
 #include "synch.h"
@@ -106,6 +107,12 @@ struct thread
     int ret;                // return value
     struct list fds;        // file descriptor opened by this thread
     int next_fd;
+#endif
+
+#ifdef VM
+   struct hash page_table;
+   struct hash mmap_table;
+   int mmap_next_id;
 #endif
 
     /* Owned by thread.c. */
