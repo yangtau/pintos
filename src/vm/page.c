@@ -139,12 +139,15 @@ bool page_load(const void *upage)
 {
     struct page *p = &(struct page){.uaddr = upage};
     struct hash_elem *e = hash_find(current_page_table(), &p->elem);
-    ASSERT(e != NULL);
+    if (e == NULL)
+        return false;
+    // ASSERT(e != NULL);
     p = hash_entry(e, struct page, elem);
 
     ASSERT(p->kaddr == NULL);
     p->kaddr = frame_alloc(p);
     ASSERT(p->kaddr != NULL);
+    frame_pin(p->kaddr);
 
     switch (p->type)
     {
@@ -162,6 +165,8 @@ bool page_load(const void *upage)
         ASSERT(false);
         break;
     }
+
+    frame_unpin(p->kaddr);
 
     *p->pte = pte_create_user(p->kaddr, p->writable);
     p->type = PAGE_NONE;
@@ -191,12 +196,19 @@ bool page_unload(const void *upage)
     return true;
 }
 
-bool page_exists(const void *upage)
+bool page_check_exists(const void *upage, bool writable)
 {
     ASSERT((uint32_t)upage % PGSIZE == 0);
     struct page *p = &(struct page){.uaddr = upage};
     struct hash_elem *e = hash_find(current_page_table(), &p->elem);
-    return e != NULL;
+    if (e == NULL)
+        return false;
+
+    if (writable)
+    {
+        return hash_entry(e, struct page, elem)->writable;
+    }
+    return true;
 }
 
 bool page_dirty(const struct page *p)

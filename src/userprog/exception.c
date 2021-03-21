@@ -149,12 +149,23 @@ page_fault (struct intr_frame *f)
   not_present = (f->error_code & PF_P) == 0;
   write = (f->error_code & PF_W) != 0;
   user = (f->error_code & PF_U) != 0;
-   // TODO: handler other cause
   void *upage = pg_round_down(fault_addr);
-  if (not_present) {
-     if (is_user_vaddr(upage)) 
-       if (page_load(upage))
-         return;
+  if (not_present)
+  {
+     if (is_user_vaddr(upage))
+     {
+        if (page_load(upage)) return;
+        // check if is stack growth
+        void *esp = f->esp;
+        if ((esp - fault_addr <=  32) &&
+            (PHYS_BASE - MAX_STACK_SIZE <= fault_addr))
+        {
+           if (page_add_stack(upage, 1, true) && page_load(upage))
+              return;
+           else
+              PANIC("Stack failed to grow");
+        }
+     }
   }
 
   /* To implement virtual memory, delete the rest of the function

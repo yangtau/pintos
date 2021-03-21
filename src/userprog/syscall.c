@@ -25,31 +25,27 @@ syscall_init (void)
 }
 
 static void
-check_user_addr_area(const void *uaddr, size_t offset) {
+check_user_addr_area(const void *uaddr, size_t offset, bool writable) {
   const uint8_t *addr = pg_round_down(uaddr);
-  while (addr < (uint8_t*)uaddr + offset) {
+  while (addr < (uint8_t *)uaddr + offset)
+  {
     if (!is_user_vaddr(addr))
-          thread_exit();
-    if (pagedir_get_page(thread_current()->pagedir, addr) == NULL &&
-        !page_exists(addr)) {
-          thread_exit();
-        }
-
-    // if (!page_exists(addr)) {
-    //   thread_exit();
-    // }
+      thread_exit();
+    if (// pagedir_get_page(thread_current()->pagedir, addr) == NULL &&
+        !page_check_exists(addr, writable))
+      thread_exit();
     addr = addr + PGSIZE;
   }
 }
 
-static void check_user_addr_str(const char *str) {
+static void check_user_addr_str(const char *str, bool writable) {
   const char *addr = pg_round_down(str)-PGSIZE;
 
   while (1) {
     char *t = pg_round_down(str);
     if (t != addr) {
       addr = t;
-      check_user_addr_area(addr, PGSIZE);
+      check_user_addr_area(addr, PGSIZE, writable);
     }
     if (!*str) break;
     str++;
@@ -59,13 +55,13 @@ static void check_user_addr_str(const char *str) {
 static uint32_t
 get_syscall_num(struct intr_frame *f) {
   // memory int the range should be valid
-  check_user_addr_area(f->esp, 4);
+  check_user_addr_area(f->esp, 4, false);
   return *((uint32_t*)f->esp);
 }
 
 static uint32_t
 get_syscall_arg(struct intr_frame *f, int n) {
-  check_user_addr_area((uint32_t*)f->esp + n + 1, 4);
+  check_user_addr_area((uint32_t*)f->esp + n + 1, 4, false);
   return *((uint32_t*)f->esp + n + 1);
 }
 
@@ -74,7 +70,7 @@ sys_exec(const char* cmd_line) {
   bool success;
 
   // check input
-  check_user_addr_str(cmd_line);
+  check_user_addr_str(cmd_line, false);
 
   tid_t tid = process_execute(cmd_line);
   if (tid == TID_ERROR) return -1;
@@ -97,13 +93,13 @@ sys_wait(tid_t tid) { // map pid to the same tid
 
 static int
 sys_create(const char* file, unsigned size) {
-  check_user_addr_str(file);
+  check_user_addr_str(file, false);
   return filesys_create(file, size);
 }
 
 static int
 sys_remove(const char* file) {
-  check_user_addr_str(file);
+  check_user_addr_str(file, false);
   return filesys_remove(file);
 }
 
@@ -112,7 +108,7 @@ sys_open(const char* file_name) {
   struct file* f;
   int ret;
 
-  check_user_addr_str(file_name);
+  check_user_addr_str(file_name, false);
 
   if ((f = filesys_open(file_name)) == NULL) {
     return -1;
@@ -163,7 +159,7 @@ static int
 sys_read(int fd, void *buffer, unsigned size) {
   struct file *f;
 
-  check_user_addr_area(buffer, size);
+  check_user_addr_area(buffer, size, true);
 
   // stdin
   if (fd == STDIN_FILENO) {
@@ -187,7 +183,7 @@ static int
 sys_write(int fd, const void *buffer, unsigned size) {
   struct file *f;
   // check buffer
-  check_user_addr_area(buffer, size);
+  check_user_addr_area(buffer, size, false);
 
   // printf("write fd: %d, buffer: %p, size: %u\n", fd, buffer, size);
   if (fd == STDOUT_FILENO) {

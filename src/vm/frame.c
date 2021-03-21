@@ -49,7 +49,7 @@ static void *frame_evict(void)
         while (hash_next(&it))
         {
             f = hash_entry(hash_cur(&it), struct frame, elem);
-            if (!page_access(f->page) && !page_dirty(f->page))
+            if (!page_access(f->page) && !page_dirty(f->page) && !f->pin)
                 goto done;
         }
 
@@ -58,7 +58,7 @@ static void *frame_evict(void)
         while (hash_next(&it))
         {
             f = hash_entry(hash_cur(&it), struct frame, elem);
-            if (!page_access(f->page))
+            if (!page_access(f->page) && !f->pin)
                 goto done;
             page_set_access(f->page, false);
         }
@@ -109,4 +109,45 @@ void frame_free(void *kaddr)
     f = hash_entry(e, struct frame, elem);
     palloc_free_page(kaddr);
     free(f);
+}
+
+bool frame_is_pinned(void *kaddr)
+{
+    bool p = false;
+    struct frame *f = &(struct frame){.kaddr = kaddr};
+
+    lock_acquire(&lock);
+    struct hash_elem *e = hash_find(&frame_table, &f->elem);
+    ASSERT(e != NULL);
+
+    p = hash_entry(e, struct frame, elem)->pin;
+    lock_release(&lock);
+
+    return p;
+}
+
+void frame_pin(void *kaddr)
+{
+    struct frame *f = &(struct frame){.kaddr = kaddr};
+
+    lock_acquire(&lock);
+    struct hash_elem *e = hash_find(&frame_table, &f->elem);
+    ASSERT(e != NULL);
+
+    f = hash_entry(e, struct frame, elem);
+    f->pin = true;
+    lock_release(&lock);
+}
+
+void frame_unpin(void *kaddr)
+{
+    struct frame *f = &(struct frame){.kaddr = kaddr};
+
+    lock_acquire(&lock);
+    struct hash_elem *e = hash_find(&frame_table, &f->elem);
+    ASSERT(e != NULL);
+
+    f = hash_entry(e, struct frame, elem);
+    f->pin = false;
+    lock_release(&lock);
 }

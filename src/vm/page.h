@@ -5,6 +5,9 @@
 #include "threads/thread.h"
 #include "vm/swap.h"
 
+// 4M
+#define MAX_STACK_SIZE (4096 * (1<<10))
+
 enum page_type
 {
     PAGE_ZERO,
@@ -43,7 +46,7 @@ bool page_add_stack(const void *upage, size_t n, bool writable);
 void page_clear(const void *page);
 bool page_load(const void *upage);
 bool page_unload(const void *upage);
-bool page_exists(const void *upage);
+bool page_check_exists(const void *upage, bool writable);
 
 bool page_dirty(const struct page *p);
 bool page_access(const struct page *p);

@@ -616,7 +616,7 @@ setup_stack (void **esp)
   // uint8_t *kpage;
   // bool success = false;
 
-  size_t n_page = 1<<10; // 1MB
+  size_t n_page = 1;
   bool success =  page_add_stack((uint8_t*)PHYS_BASE-PGSIZE*n_page, n_page, true);
   if (success) *esp = PHYS_BASE;
   return success;
