@@ -11,36 +11,41 @@ enum page_type
     PAGE_SWAP,
     PAGE_FILESYS, // mmap
     PAGE_STACK,
-    PAGE_HEAP,
+    PAGE_NONE,
 };
 
 struct page
 {
     struct hash_elem elem;
-    void *uaddr;
+    const void *uaddr;
     void *kaddr;
+    uint32_t *pte;
     enum page_type type;
     bool writable;
 
-    union
+    struct
     {
-        struct
-        {
-            int mapid; // if status is PAGE_FILESYS
-            int off;   // a page may be part of a mmap
-        } mmap;
-        swapid_t swapid; // if status os PAGE_SWAP
-    } as;
+        int mapid; // if status is PAGE_FILESYS
+        int off;   // a page may be part of a mmap
+    } mmap;
+    swapid_t swapid; // if status os PAGE_SWAP
 };
 
 void page_table_init(struct thread *t);
 void page_table_free(struct thread *t);
 
 // page must not be present
-bool page_add_mmap(void *upage, int mapid, int off, bool writable);
-bool page_add_zero(void *upage, bool writable);
-bool page_add_zeros(void *upage,size_t n, bool writable);
+bool page_add_mmap(const void *upage, int mapid, int off, bool writable);
+bool page_add_zero(const void *upage, bool writable);
+bool page_add_zeros(const void *upage, size_t n, bool writable);
 
-void page_clear(void *page);
-bool page_load(void *upage);
+void page_clear(const void *page);
+bool page_load(const void *upage);
+bool page_unload(const void *upage);
+bool page_exists(const void *upage);
+
+bool page_dirty(const struct page *p);
+bool page_access(const struct page *p);
+void page_set_access(const struct page *p, bool a);
+void page_pte_clear(const struct page *p);
 #endif

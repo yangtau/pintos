@@ -13,6 +13,7 @@
 #include "devices/input.h"
 #include "filesys/filesys.h"
 #include "filesys/file.h"
+#include "vm/page.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -24,13 +25,18 @@ syscall_init (void)
 
 static void
 check_user_addr_area(const void *uaddr, size_t offset) {
-  struct thread *cur = thread_current();
   const uint8_t *addr = pg_round_down(uaddr);
   while (addr < (uint8_t*)uaddr + offset) {
-    if (!is_user_vaddr(addr) ||
-        pagedir_get_page(cur->pagedir, addr) == NULL) {
-      thread_exit();
-    }
+    if (!is_user_vaddr(addr))
+          thread_exit();
+    if (pagedir_get_page(thread_current()->pagedir, addr) == NULL &&
+        !page_exists(addr)) {
+          thread_exit();
+        }
+
+    // if (!page_exists(addr)) {
+    //   thread_exit();
+    // }
     addr = addr + PGSIZE;
   }
 }

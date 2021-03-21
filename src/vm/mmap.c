@@ -97,13 +97,11 @@ void mmap_remove(int mmapid)
 
     size_t off = 0;
     for (; off < map->size; off += PGSIZE)
-    {
-        // TODO: write back
         page_clear(map->start_page + off);
-    }
+    // TODO: unload
 }
 
-void mmap_load(int mmapid, void *kpage, int off)
+void mmap_load(int mmapid, void *page, int off)
 {
     struct mmap *map = mmap_find(mmapid);
     ASSERT(map != NULL);
@@ -113,5 +111,18 @@ void mmap_load(int mmapid, void *kpage, int off)
     int size = (int)map->size - off;
     ASSERT(size > 0);
     size = size > PGSIZE ? PGSIZE : size;
-    ASSERT(file_read_at(f, kpage, size, map->offset + off) > 0);
+    ASSERT(file_read_at(f, page, size, map->offset + off) == size);
+}
+
+void mmap_unload(int mmapid, void *page, int off)
+{
+    struct mmap *map = mmap_find(mmapid);
+    ASSERT(map != NULL);
+
+    struct file *f = process_fd_get(map->fd);
+    ASSERT(f != NULL);
+    int size = (int)map->size - off;
+    ASSERT(size > 0);
+    size = size > PGSIZE ? PGSIZE : size;
+    ASSERT(file_write_at(f, page, size, map->offset + off) == size);
 }

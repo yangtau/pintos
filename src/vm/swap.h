@@ -14,4 +14,6 @@ void swap_in(swapid_t, void *);
 // write to swap
 // allocate a swap block
 swapid_t swap_out(void *);
+
+void swap_release(swapid_t id);
 #endif

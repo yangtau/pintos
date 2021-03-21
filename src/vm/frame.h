@@ -8,12 +8,12 @@ struct frame
 {
     struct hash_elem elem;
     void *kaddr;
-    struct page *page;
+    const struct page *page;
 };
 
 void frame_table_init(void);
 void frame_table_free(void);
 
-void *frame_alloc(struct page *);
-void frame_free(void *kaddr, bool clear_pte);
+void *frame_alloc(const struct page *);
+void frame_free(void *kaddr);
 #endif

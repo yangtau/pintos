@@ -4,6 +4,8 @@
 #include <string.h>
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
+#include "threads/pte.h"
+#include "userprog/pagedir.h"
 #include "vm/frame.h"
 #include "vm/swap.h"
 #include "vm/mmap.h"
@@ -24,9 +26,8 @@ static bool page_less(const struct hash_elem *e, const struct hash_elem *f, void
 static void page_free(struct hash_elem *e, void *aux UNUSED)
 {
     struct page *p = hash_entry(e, struct page, elem);
-    if (p->kaddr != NULL) {
-        frame_free(p->kaddr, true);
-    }
+    if (p->kaddr != NULL)
+        frame_free(p->kaddr);
     free(p);
 }
 
@@ -45,45 +46,46 @@ static struct hash *current_page_table(void)
     return &thread_current()->page_table;
 }
 
+static struct page *new_page(const void *upage, enum page_type type, bool writable)
+{
+    struct page *p = calloc(1, sizeof(struct page));
+    ASSERT(p != NULL);
+    p->uaddr = upage;
+    p->type = type;
+    p->writable = writable;
+    p->pte = pagedir_get_pte(thread_current()->pagedir, upage, true);
+    return p;
+}
+
 // page must not be present
-bool page_add_mmap(void *upage, int mapid, int off, bool writable)
+bool page_add_mmap(const void *upage, int mapid, int off, bool writable)
 {
     struct page *p = &(struct page){.uaddr = upage};
     if (hash_find(current_page_table(), &p->elem) != NULL)
         return false;
 
-    p = calloc(1, sizeof(struct page));
-    ASSERT(p != NULL);
-
-    p->uaddr = upage;
-    p->type = PAGE_FILESYS;
-    p->writable = writable;
-    p->as.mmap.mapid = mapid;
-    p->as.mmap.off = off;
+    p = new_page(upage, PAGE_FILESYS, writable);
+    p->mmap.mapid = mapid;
+    p->mmap.off = off;
 
     ASSERT(hash_insert(current_page_table(), &p->elem) == NULL);
     return true;
 }
 
-bool page_add_zero(void *upage, bool writable)
+bool page_add_zero(const void *upage, bool writable)
 {
     struct page *p = &(struct page){.uaddr = upage};
     if (hash_find(current_page_table(), &p->elem) != NULL)
         return false;
 
-    p = calloc(1, sizeof(struct page));
-    ASSERT(p != NULL);
-
-    p->uaddr = upage;
-    p->type = PAGE_ZERO;
-    p->writable = writable;
+    p = new_page(upage, PAGE_ZERO, writable);
 
     ASSERT(hash_insert(current_page_table(), &p->elem) == NULL);
     return true;
 }
 
 //  add n zero page start from upage
-bool page_add_zeros(void *upage, size_t n, bool writable)
+bool page_add_zeros(const void *upage, size_t n, bool writable)
 {
     size_t i, j;
     for (i = 0; i < n; i++)
@@ -96,25 +98,24 @@ bool page_add_zeros(void *upage, size_t n, bool writable)
     return true;
 }
 
-void page_clear(void *upage)
+void page_clear(const void *upage)
 {
     struct page *p = &(struct page){.uaddr = upage};
     struct hash_elem *e = hash_find(current_page_table(), &p->elem);
     ASSERT(e != NULL);
 
-    page_free(e, NULL);
-    
-    // p = hash_entry(e, struct page, elem);
+    p = hash_entry(e, struct page, elem);
+    if (p->type == PAGE_SWAP)
+        swap_release(p->swapid);
 
-    // // TODO: free it if it use a frame?
-    // if (p->kaddr != NULL)
-    //     frame_free(p->kaddr, true);
+    if (p->kaddr != NULL)
+        frame_free(p->kaddr);
 
     hash_delete(current_page_table(), e);
     free(p);
 }
 
-bool page_load(void *upage)
+bool page_load(const void *upage)
 {
     struct page *p = &(struct page){.uaddr = upage};
     struct hash_elem *e = hash_find(current_page_table(), &p->elem);
@@ -128,20 +129,75 @@ bool page_load(void *upage)
     switch (p->type)
     {
     case PAGE_ZERO:
-        memset(p->kaddr, 0, PGSIZE);
-        return true;
-    case PAGE_SWAP:
-        swap_in(p->as.swapid, p->kaddr);
-        return true;
+        break;
     case PAGE_FILESYS:
-        mmap_load(p->as.mmap.mapid, p->kaddr, p->as.mmap.off);
-        return true;
+        mmap_load(p->mmap.mapid, p->kaddr, p->mmap.off);
+        break;
+    case PAGE_SWAP:
+        swap_in(p->swapid, p->kaddr);
+        break;
     case PAGE_STACK:
-        return true;
-    case PAGE_HEAP:
-        return true;
+        break;
     default:
+        ASSERT(false);
         break;
     }
-    return false;
+
+    *p->pte = pte_create_user(p->kaddr, p->writable);
+    p->type = PAGE_NONE;
+    return true;
+}
+
+// may be called by other thread
+// TODO: lock
+bool page_unload(const void *upage)
+{
+    struct page *p = &(struct page){.uaddr = upage};
+    struct hash_elem *e = hash_find(current_page_table(), &p->elem);
+    ASSERT(e != NULL);
+    p = hash_entry(e, struct page, elem);
+
+    ASSERT(p->kaddr != NULL);
+    void *kpage = p->kaddr;
+    p->kaddr = NULL;
+
+    page_pte_clear(p);
+
+    ASSERT(p->type == PAGE_NONE);
+
+    p->swapid = swap_out(kpage);
+    p->type = PAGE_SWAP;
+
+    return true;
+}
+
+bool page_exists(const void *upage)
+{
+    ASSERT((uint32_t)upage % PGSIZE == 0);
+    struct page *p = &(struct page){.uaddr = upage};
+    struct hash_elem *e = hash_find(current_page_table(), &p->elem);
+    return e != NULL;
+}
+
+bool page_dirty(const struct page *p)
+{
+    return !!(*p->pte & PTE_D);
+}
+
+bool page_access(const struct page *p)
+{
+    return !!(*p->pte & PTE_A);
+}
+
+void page_set_access(const struct page *p, bool a)
+{
+    if (a)
+        *p->pte |= PTE_A;
+    else
+        *p->pte &= ~(uint32_t)(PTE_A);
+}
+
+void page_pte_clear(const struct page *p)
+{
+    *p->pte &= ~(uint32_t)PTE_P;
 }

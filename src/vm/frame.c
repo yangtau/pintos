@@ -33,19 +33,58 @@ void frame_table_free(void)
 {
 }
 
+// CLOCK
 static void *frame_evict(void)
 {
-    return NULL;
+    struct hash_iterator it;
+    struct frame *f = NULL;
+
+    lock_acquire(&lock);
+    if (hash_empty(&frame_table))
+        goto done;
+    while (true)
+    {
+        // first phase: try to find an entry that (A=0, D=0)
+        hash_first(&it, &frame_table);
+        while (hash_next(&it))
+        {
+            f = hash_entry(hash_cur(&it), struct frame, elem);
+            if (!page_access(f->page) && !page_dirty(f->page))
+                goto done;
+        }
+
+        // second phase: try to find an entry that (A=0, D=1), and clear A
+        hash_first(&it, &frame_table);
+        while (hash_next(&it))
+        {
+            f = hash_entry(hash_cur(&it), struct frame, elem);
+            if (!page_access(f->page))
+                goto done;
+            page_set_access(f->page, false);
+        }
+    }
+    void *page = NULL;
+
+done:
+    if (f != NULL)
+    {
+        page = f->kaddr;
+        ASSERT(page_unload(f->page->uaddr));
+        // remove f in the hash table
+        hash_delete(&frame_table, &f->elem);
+        free(f);
+    }
+    lock_release(&lock);
+    return page;
 }
 
-void *frame_alloc(struct page *page)
+void *frame_alloc(const struct page *page)
 {
     ASSERT(page->kaddr == NULL);
     void *kpage = palloc_get_page(PAL_USER | PAL_ZERO);
     if (kpage == NULL)
         kpage = frame_evict();
     ASSERT(kpage != NULL);
-    page->kaddr = kpage;
 
     struct frame *f = malloc(sizeof(struct frame));
     f->kaddr = kpage;
@@ -55,14 +94,10 @@ void *frame_alloc(struct page *page)
     hash_insert(&frame_table, &f->elem);
     lock_release(&lock);
 
-
-    ASSERT(pagedir_get_page(thread_current()->pagedir, page->uaddr) == NULL);
-    pagedir_set_page(thread_current()->pagedir, page->uaddr, kpage, page->writable);
-
     return kpage;
 }
 
-void frame_free(void *kaddr, bool clear_pte)
+void frame_free(void *kaddr)
 {
     struct frame *f = &(struct frame){.kaddr = kaddr};
 
@@ -72,9 +107,6 @@ void frame_free(void *kaddr, bool clear_pte)
     lock_release(&lock);
 
     f = hash_entry(e, struct frame, elem);
-    if (clear_pte)
-        pagedir_clear_page(thread_current()->pagedir, f->page->uaddr);
-
     palloc_free_page(kaddr);
     free(f);
 }

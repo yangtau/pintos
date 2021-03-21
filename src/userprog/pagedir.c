@@ -55,8 +55,8 @@ pagedir_destroy (uint32_t *pd)
    on CREATE.  If CREATE is true, then a new page table is
    created and a pointer into it is returned.  Otherwise, a null
    pointer is returned. */
-static uint32_t *
-lookup_page (uint32_t *pd, const void *vaddr, bool create)
+uint32_t *
+pagedir_get_pte (uint32_t *pd, const void *vaddr, bool create)
 {
   uint32_t *pt, *pde;
 
@@ -108,7 +108,7 @@ pagedir_set_page (uint32_t *pd, void *upage, void *kpage, bool writable)
   ASSERT (vtop (kpage) >> PTSHIFT < init_ram_pages);
   ASSERT (pd != init_page_dir);
 
-  pte = lookup_page (pd, upage, true);
+  pte = pagedir_get_pte (pd, upage, true);
 
   if (pte != NULL) 
     {
@@ -131,7 +131,7 @@ pagedir_get_page (uint32_t *pd, const void *uaddr)
 
   ASSERT (is_user_vaddr (uaddr));
   
-  pte = lookup_page (pd, uaddr, false);
+  pte = pagedir_get_pte (pd, uaddr, false);
   if (pte != NULL && (*pte & PTE_P) != 0)
     return pte_get_page (*pte) + pg_ofs (uaddr);
   else
@@ -150,7 +150,7 @@ pagedir_clear_page (uint32_t *pd, void *upage)
   ASSERT (pg_ofs (upage) == 0);
   ASSERT (is_user_vaddr (upage));
 
-  pte = lookup_page (pd, upage, false);
+  pte = pagedir_get_pte (pd, upage, false);
   if (pte != NULL && (*pte & PTE_P) != 0)
     {
       *pte &= ~PTE_P;
@@ -165,7 +165,7 @@ pagedir_clear_page (uint32_t *pd, void *upage)
 bool
 pagedir_is_dirty (uint32_t *pd, const void *vpage) 
 {
-  uint32_t *pte = lookup_page (pd, vpage, false);
+  uint32_t *pte = pagedir_get_pte (pd, vpage, false);
   return pte != NULL && (*pte & PTE_D) != 0;
 }
 
@@ -174,7 +174,7 @@ pagedir_is_dirty (uint32_t *pd, const void *vpage)
 void
 pagedir_set_dirty (uint32_t *pd, const void *vpage, bool dirty) 
 {
-  uint32_t *pte = lookup_page (pd, vpage, false);
+  uint32_t *pte = pagedir_get_pte (pd, vpage, false);
   if (pte != NULL) 
     {
       if (dirty)
@@ -194,7 +194,7 @@ pagedir_set_dirty (uint32_t *pd, const void *vpage, bool dirty)
 bool
 pagedir_is_accessed (uint32_t *pd, const void *vpage) 
 {
-  uint32_t *pte = lookup_page (pd, vpage, false);
+  uint32_t *pte = pagedir_get_pte (pd, vpage, false);
   return pte != NULL && (*pte & PTE_A) != 0;
 }
 
@@ -203,7 +203,7 @@ pagedir_is_accessed (uint32_t *pd, const void *vpage)
 void
 pagedir_set_accessed (uint32_t *pd, const void *vpage, bool accessed) 
 {
-  uint32_t *pte = lookup_page (pd, vpage, false);
+  uint32_t *pte = pagedir_get_pte (pd, vpage, false);
   if (pte != NULL) 
     {
       if (accessed)

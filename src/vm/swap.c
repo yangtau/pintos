@@ -34,15 +34,14 @@ static block_sector_t swap_id_to_sector(swapid_t id)
 // release a swap block
 void swap_in(swapid_t id, void *page)
 {
-    lock_acquire(&lock);
-    ASSERT(bitmap_test(swap_bits, id));
-
     block_sector_t sector = swap_id_to_sector(id);
     size_t size = 0;
     for (; size < PGSIZE; size += BLOCK_SECTOR_SIZE)
-        block_read(swap_block, sector++, page);
+        block_read(swap_block, sector++, page + size);
 
-    bitmap_flip(swap_bits, id);
+    lock_acquire(&lock);
+    ASSERT(bitmap_test(swap_bits, id));
+    bitmap_set(swap_bits, id, false);
     lock_release(&lock);
 }
 
@@ -51,15 +50,24 @@ void swap_in(swapid_t id, void *page)
 swapid_t swap_out(void *page)
 {
     lock_acquire(&lock);
-    size_t id = bitmap_scan_and_flip(swap_bits, 0, block_cnt, false);
-    ASSERT(id != 0);
+    size_t id = bitmap_scan_and_flip(swap_bits, 0, 1, false);
+    lock_release(&lock);
+
+    ASSERT(id != BITMAP_ERROR);
 
     block_sector_t sector = swap_id_to_sector(id);
     size_t size = 0;
     for (; size < PGSIZE; size += BLOCK_SECTOR_SIZE)
-        block_write(swap_block, sector++, page);
+        block_write(swap_block, sector++, page + size);
 
-    bitmap_flip(swap_bits, id);
-    lock_release(&lock);
     return id;
+}
+
+void swap_release(swapid_t id)
+{
+    lock_acquire(&lock);
+    ASSERT(bitmap_test(swap_bits, id));
+
+    bitmap_set(swap_bits, id, false);
+    lock_release(&lock);
 }

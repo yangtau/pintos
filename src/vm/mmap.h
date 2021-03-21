@@ -23,6 +23,6 @@ void mmap_table_free(struct thread *t);
 int mmap_add(int fd, int offset, size_t size, void *p, bool writable);
 struct mmap *mmap_find(int mmapid);
 void mmap_remove(int mmapid);
-void mmap_load(int mmapid, void *kpage, int off);
-
+void mmap_load(int mmapid, void *page, int off);
+void mmap_unload(int mmapid, void *page, int off);
 #endif // vm/area.h
