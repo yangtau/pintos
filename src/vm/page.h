@@ -38,6 +38,7 @@ void page_table_free(struct thread *t);
 bool page_add_mmap(const void *upage, int mapid, int off, bool writable);
 bool page_add_zero(const void *upage, bool writable);
 bool page_add_zeros(const void *upage, size_t n, bool writable);
+bool page_add_stack(const void *upage, size_t n, bool writable);
 
 void page_clear(const void *page);
 bool page_load(const void *upage);

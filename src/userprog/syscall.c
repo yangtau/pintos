@@ -14,6 +14,7 @@
 #include "filesys/filesys.h"
 #include "filesys/file.h"
 #include "vm/page.h"
+#include "vm/mmap.h"
 
 static void syscall_handler (struct intr_frame *);
 
@@ -220,6 +221,28 @@ sys_tell(int fd) {
   return file_tell(f);
 }
 
+static int sys_mmap(int fd, void *addr) {
+  struct file *f;
+  if ((uint32_t)addr % PGSIZE != 0) return false;
+
+  if ((f= process_fd_get(fd)) == NULL) return -1;
+
+  size_t len = file_length(f);
+  if (len == 0) return -1;
+
+  if ((f = file_reopen(f)) == NULL) return -1;
+
+  return mmap_add(f, 0, len, addr, true, true);
+}
+
+static void sys_unmmap(int mapid) {
+  if (mmap_find(mapid) == NULL) {
+    PANIC("unexpected mmapid");
+    thread_exit();
+  }
+  mmap_remove(mapid);
+}
+
 
 static void
 syscall_handler (struct intr_frame *f UNUSED) 
@@ -271,6 +294,12 @@ syscall_handler (struct intr_frame *f UNUSED)
       break;
     case SYS_CLOSE:
       sys_close(get_syscall_arg(f, 0));
+      break;
+    case SYS_MMAP:
+      f->eax = sys_mmap((int)get_syscall_arg(f, 0), (void*)get_syscall_arg(f, 1));
+      break;  
+    case SYS_MUNMAP:
+      sys_unmmap((int)get_syscall_arg(f, 0));
       break;
     default:
       ASSERT(0);

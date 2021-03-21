@@ -2,8 +2,9 @@
 
 #include "threads/malloc.h"
 #include "threads/vaddr.h"
-#include "userprog/process.h"
 #include "filesys/file.h"
+
+static void mmap_unload(struct mmap *map);
 
 static unsigned mmap_entry_hash(const struct hash_elem *p_, void *AUX UNUSED)
 {
@@ -21,6 +22,7 @@ static bool mmap_entry_less(const struct hash_elem *a_, const struct hash_elem *
 static void mmap_hash_free(struct hash_elem *e, void *aux UNUSED)
 {
     struct mmap *m = hash_entry(e, struct mmap, elem);
+    mmap_unload(m);
     free(m);
 }
 
@@ -49,11 +51,10 @@ static struct hash *current_mmap_table(void)
 // If the size not a multiple of PGSIZE, then some bytes in the final mapped
 // page "stick out" beyond the end of the file. Set these bytes to zero.
 // return -1 on failure
-int mmap_add(int fd, int off, size_t size, void *upage, bool writable)
+int mmap_add(struct file *f, int off, size_t size, void *upage, bool writable, bool writeback)
 {
     ASSERT((uint32_t)upage % PGSIZE == 0 && off >= 0 && size > 0);
-    if (fd <= 1)
-        return -1;
+    ASSERT(f != NULL);
 
     int32_t mapid = next_mmapid();
     size_t map_off = 0;
@@ -72,10 +73,11 @@ int mmap_add(int fd, int off, size_t size, void *upage, bool writable)
     struct mmap *entry = malloc(sizeof(struct mmap));
     ASSERT(entry != NULL);
     entry->id = mapid;
-    entry->fd = fd;
+    entry->file = f;
     entry->offset = off;
     entry->size = size;
     entry->start_page = upage;
+    entry->writeback = writeback;
     ASSERT(hash_insert(current_mmap_table(), &entry->elem) == NULL);
     return mapid;
 }
@@ -93,12 +95,16 @@ void mmap_remove(int mmapid)
 {
     struct mmap *map = mmap_find(mmapid);
     ASSERT(map != NULL);
-    ASSERT(hash_delete(current_mmap_table(), &map->elem) != NULL);
+
+    mmap_unload(map);
 
     size_t off = 0;
     for (; off < map->size; off += PGSIZE)
+    {
         page_clear(map->start_page + off);
-    // TODO: unload
+    }
+
+    ASSERT(hash_delete(current_mmap_table(), &map->elem) != NULL);
 }
 
 void mmap_load(int mmapid, void *page, int off)
@@ -106,23 +112,23 @@ void mmap_load(int mmapid, void *page, int off)
     struct mmap *map = mmap_find(mmapid);
     ASSERT(map != NULL);
 
-    struct file *f = process_fd_get(map->fd);
-    ASSERT(f != NULL);
     int size = (int)map->size - off;
     ASSERT(size > 0);
     size = size > PGSIZE ? PGSIZE : size;
-    ASSERT(file_read_at(f, page, size, map->offset + off) == size);
+    ASSERT(file_read_at(map->file, page, size, map->offset + off) == size);
 }
 
-void mmap_unload(int mmapid, void *page, int off)
+static void mmap_unload(struct mmap *map)
 {
-    struct mmap *map = mmap_find(mmapid);
     ASSERT(map != NULL);
+    if (!map->writeback)
+        return;
 
-    struct file *f = process_fd_get(map->fd);
-    ASSERT(f != NULL);
-    int size = (int)map->size - off;
-    ASSERT(size > 0);
-    size = size > PGSIZE ? PGSIZE : size;
-    ASSERT(file_write_at(f, page, size, map->offset + off) == size);
+    size_t off = 0;
+    for (; off < map->size; off += PGSIZE)
+    {
+        int size = (int)map->size - off;
+        size = size > PGSIZE ? PGSIZE : size;
+        ASSERT(file_write_at(map->file, map->start_page + off, size, map->offset + off) == size);
+    }
 }

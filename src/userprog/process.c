@@ -286,8 +286,8 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  close_all_files();
   mmap_table_free(cur);
+  close_all_files();
   page_table_free(cur);
 
   /* Destroy the current process's page directory and switch back
@@ -394,7 +394,7 @@ struct Elf32_Phdr
 
 static bool setup_stack (void **esp);
 static bool validate_segment (const struct Elf32_Phdr *, struct file *);
-static bool load_segment (int fd, off_t ofs, uint8_t *upage,
+static bool load_segment (struct file *f, off_t ofs, uint8_t *upage,
                           uint32_t read_bytes, uint32_t zero_bytes,
                           bool writable);
 
@@ -427,8 +427,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
     }
   
   file_deny_write(file);
-  int fd;
-  if ((fd = process_fd_add(file)) < 0) {
+  if ((process_fd_add(file)) < 0) {
     file_close(file);
     goto done;
   }
@@ -495,7 +494,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
                   read_bytes = 0;
                   zero_bytes = ROUND_UP (page_offset + phdr.p_memsz, PGSIZE);
                 }
-              if (!load_segment (fd, file_page, (void *) mem_page,
+              if (!load_segment (file, file_page, (void *) mem_page,
                                  read_bytes, zero_bytes, writable))
                 goto done;
             }
@@ -524,7 +523,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
 /* load() helpers. */
 
-static bool install_page (void *upage, void *kpage, bool writable);
+// static bool install_page (void *upage, void *kpage, bool writable);
 
 /* Checks whether PHDR describes a valid, loadable segment in
    FILE and returns true if so, false otherwise. */
@@ -586,7 +585,7 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
    Return true if successful, false if a memory allocation error
    or disk read error occurs. */
 static bool
-load_segment (int fd, off_t ofs, uint8_t *upage,
+load_segment (struct file *f, off_t ofs, uint8_t *upage,
               uint32_t read_bytes, uint32_t zero_bytes, bool writable) 
 {
   ASSERT ((read_bytes + zero_bytes) % PGSIZE == 0);
@@ -595,7 +594,7 @@ load_segment (int fd, off_t ofs, uint8_t *upage,
 
   if (read_bytes > 0) {
     int mapid;
-    if ((mapid = mmap_add(fd, ofs, read_bytes, upage, writable)) < 0) return false;
+    if ((mapid = mmap_add(f, ofs, read_bytes, upage, writable, false)) < 0) return false;
     if (zero_bytes > PGSIZE) {
       if (!page_add_zeros(upage+ROUND_UP(read_bytes, PGSIZE),zero_bytes/PGSIZE ,writable)) {
         mmap_remove(mapid);
@@ -614,20 +613,24 @@ load_segment (int fd, off_t ofs, uint8_t *upage,
 static bool
 setup_stack (void **esp) 
 {
-  uint8_t *kpage;
-  bool success = false;
+  // uint8_t *kpage;
+  // bool success = false;
 
-  // TODO: replace with paging
-  kpage = palloc_get_page (PAL_USER | PAL_ZERO);
-  if (kpage != NULL) 
-    {
-      success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
-      if (success)
-        *esp = PHYS_BASE;
-      else
-        palloc_free_page (kpage);
-    }
+  size_t n_page = 1<<10; // 1MB
+  bool success =  page_add_stack((uint8_t*)PHYS_BASE-PGSIZE*n_page, n_page, true);
+  if (success) *esp = PHYS_BASE;
   return success;
+
+  // kpage = palloc_get_page (PAL_USER | PAL_ZERO);
+  // if (kpage != NULL) 
+  //   {
+  //     success = install_page (((uint8_t *) PHYS_BASE) - PGSIZE, kpage, true);
+  //     if (success)
+  //       *esp = PHYS_BASE;
+  //     else
+  //       palloc_free_page (kpage);
+  //   }
+  // return success;
 }
 
 /* Adds a mapping from user virtual address UPAGE to kernel
@@ -639,13 +642,13 @@ setup_stack (void **esp)
    with palloc_get_page().
    Returns true on success, false if UPAGE is already mapped or
    if memory allocation fails. */
-static bool
-install_page (void *upage, void *kpage, bool writable)
-{
-  struct thread *t = thread_current ();
+// static bool
+// install_page (void *upage, void *kpage, bool writable)
+// {
+//   struct thread *t = thread_current ();
 
-  /* Verify that there's not already a page at that virtual
-     address, then map our page there. */
-  return (pagedir_get_page (t->pagedir, upage) == NULL
-          && pagedir_set_page (t->pagedir, upage, kpage, writable));
-}
+//   /* Verify that there's not already a page at that virtual
+//      address, then map our page there. */
+//   return (pagedir_get_page (t->pagedir, upage) == NULL
+//           && pagedir_set_page (t->pagedir, upage, kpage, writable));
+// }

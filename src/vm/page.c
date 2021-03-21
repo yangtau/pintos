@@ -98,6 +98,26 @@ bool page_add_zeros(const void *upage, size_t n, bool writable)
     return true;
 }
 
+bool page_add_stack(const void *upage, size_t n, bool writable)
+{
+    size_t i, j;
+    for (i = 0; i < n; i++)
+    {
+        const void *uaddr = upage + i * PGSIZE;
+        struct page *p = &(struct page){.uaddr = uaddr};
+        if (hash_find(current_page_table(), &p->elem) != NULL)
+        {
+            for (j = 0; j < i; j++)
+                page_clear(upage + PGSIZE * i);
+            return false;
+        }
+
+        p = new_page(uaddr, PAGE_STACK, writable);
+        ASSERT(hash_insert(current_page_table(), &p->elem) == NULL);
+    }
+    return true;
+}
+
 void page_clear(const void *upage)
 {
     struct page *p = &(struct page){.uaddr = upage};
